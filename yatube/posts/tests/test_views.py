@@ -209,7 +209,7 @@ class FollowViewsTest(TestCase):
         super().setUpClass()
         cls.auth_user = User.objects.create_user(username='auth_user')
         cls.author = User.objects.create_user(username='author')
-        cls.new_author = User.objects.create_user(username='author')
+        cls.new_author = User.objects.create_user(username='new_author')
         Post.objects.create(
             id=1,
             author=cls.author,
