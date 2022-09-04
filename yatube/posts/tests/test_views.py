@@ -9,7 +9,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django import forms
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
-from ..models import Post, Group, Follow
+from django.core.cache import cache
+from ..models import Post, Group, Follow, Comment
 
 
 User = get_user_model()
@@ -54,6 +55,7 @@ class PostPagesTests(TestCase):
         shutil.rmtree(TEMP_MEDIA_ROOT, ignore_errors=True)
 
     def setUp(self):
+        cache.clear()
         self.guest_client = Client()
         self.auth_client = Client()
         self.auth_client.force_login(PostPagesTests.auth_user)
@@ -74,12 +76,16 @@ class PostPagesTests(TestCase):
             reverse('posts:post_edit', kwargs={'post_id': 1}): {
                 'auth': 'posts/create_edit_post.html',
             },
+            reverse('posts:follow_index'): {
+                'auth': 'posts/follow.html',
+            },
         }
         for reverse_name, template in templates_pages_names.items():
             with self.subTest(reverse_name=reverse_name):
                 if isinstance(template, str):
                     response = self.auth_client.get(reverse_name)
                     self.assertTemplateUsed(response, template)
+                    cache.clear()
                 else:
                     template = template['auth']
 
@@ -187,9 +193,11 @@ class PaginatorViewsTest(TestCase):
         )
 
     def setUp(self):
+        cache.clear()
         self.client = Client()
 
     def test_first_second_page_contains(self):
+        """Паджинатор формирует правильное количество постов."""
         reverse_pages_names = [
             reverse('posts:index'),
             reverse('posts:group_list', kwargs={'slug': 'group-slug'}),
@@ -228,6 +236,7 @@ class FollowViewsTest(TestCase):
         self.author.force_login(FollowViewsTest.author)
 
     def test_profile_follow_correct(self):
+        """Функция follow позволяет подписаться на автора."""
         count_follow = Follow.objects.count()
         reverse_name = reverse(
             'posts:profile_follow',
@@ -261,7 +270,29 @@ class FollowViewsTest(TestCase):
             ).exists()
         )
 
+        count_follow = Follow.objects.count()
+        response = self.auth_client.post(
+            reverse(
+                'posts:profile_follow',
+                kwargs={'username': 'auth_user'}
+            )
+        )
+        self.assertRedirects(
+            response, reverse(
+                'posts:profile',
+                kwargs={'username': 'auth_user'}
+            )
+        )
+        self.assertEqual(Follow.objects.count(), count_follow)
+        self.assertFalse(
+            Follow.objects.filter(
+                user=FollowViewsTest.auth_user,
+                author=FollowViewsTest.auth_user
+            ).exists()
+        )
+
     def test_profile_unfollow_correct(self):
+        """Функция unfollow позволяет отписаться от автора."""
         count_follow = Follow.objects.count()
         reverse_name = reverse(
             'posts:profile_unfollow',
@@ -296,6 +327,7 @@ class FollowViewsTest(TestCase):
         )
 
     def test_follow_correct_context(self):
+        """Шаблон follow сформирован с правильным контекстом."""
         response = self.auth_client.get(reverse('posts:follow_index'))
         first_object = response.context['page_obj'][0]
         post_author_0 = first_object.author
@@ -306,3 +338,58 @@ class FollowViewsTest(TestCase):
         response = self.author.get(reverse('posts:follow_index'))
         first_object = response.context['page_obj'].object_list
         self.assertEqual(0, len(first_object))
+
+
+class CommentViewsTest(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.auth_user = User.objects.create_user(username='auth_user')
+        cls.post = Post.objects.create(
+            id=1,
+            author=cls.auth_user,
+            text='Тестовый пост'
+        )
+        Comment.objects.create(
+            id=1,
+            post=cls.post,
+            author=cls.auth_user,
+            text='Тестовый текст'
+        )
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_add_comment_correct_context(self):
+        """Шаблон post_detail сформирован с правильным комментарием."""
+        response = self.client.get(
+            reverse('posts:post_detail', kwargs={'post_id': 1}),
+        )
+        first_object = response.context['comments'][0]
+        comment_author_0 = first_object.author
+        comment_text_0 = first_object.text
+        self.assertEqual(comment_author_0, CommentViewsTest.auth_user)
+        self.assertEqual(comment_text_0, 'Тестовый текст')
+
+
+class CachePagesTest(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.user = User.objects.create_user(username='user')
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_index_page_have_cache(self):
+        """Шаблон index хранится в кэше."""
+        posts = self.client.get(reverse('posts:index')).content
+        Post.objects.create(
+            text='Тестовый текст',
+            author=CachePagesTest.user,
+        )
+        old_posts = self.client.get(reverse('posts:index')).content
+        self.assertEqual(old_posts, posts)
+        cache.clear()
+        new_posts = self.client.get(reverse('posts:index')).content
+        self.assertNotEqual(old_posts, new_posts)

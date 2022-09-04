@@ -1,5 +1,6 @@
 from django.core.paginator import Paginator
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.cache import cache_page
 from django.shortcuts import render, get_object_or_404, redirect
 from .models import Group, Post, User, Follow
 from .forms import PostForm, CommentForm
@@ -14,31 +15,7 @@ def get_paginator(request, selection):
     return paginator.get_page(page_number)
 
 
-def create_edit_post(request, post=None):
-    form = PostForm(
-        request.POST or None,
-        files=request.FILES or None,
-        instance=post
-    )
-
-    if form.is_valid():
-        if post is not None:
-            form.save()
-            return redirect('posts:post_detail', post_id=post.id)
-
-        new_post = form.save(commit=False)
-        new_post.author = request.user
-        new_post.save()
-        return redirect('posts:profile', username=request.user.username)
-
-    context = {
-        'form': form,
-        'post': post,
-        'is_edit': post is not None
-    }
-    return render(request, template_create_edit_post, context)
-
-
+@cache_page(20, key_prefix='index_page')
 def index(request):
     post_list = Post.objects.select_related('author', 'group').all()
     page_obj = get_paginator(request, post_list)
@@ -88,28 +65,52 @@ def post_detail(request, post_id):
 
 @login_required
 def post_create(request):
-    if request.method == 'POST':
-        return create_edit_post(request)
+    if request.method != 'POST':
+        form = PostForm()
+        return render(request, template_create_edit_post, {'form': form})
 
-    form = PostForm()
-    return render(request, template_create_edit_post, {'form': form})
+    form = PostForm(
+        request.POST or None,
+        files=request.FILES or None
+    )
+
+    if form.is_valid():
+        new_post = form.save(commit=False)
+        new_post.author = request.user
+        new_post.save()
+        return redirect('posts:profile', username=request.user.username)
+
+    context = {
+        'form': form,
+        'is_edit': False
+    }
+    return render(request, template_create_edit_post, context)
 
 
 @login_required
 def post_edit(request, post_id):
     post = get_object_or_404(Post, id=post_id)
-
-    if request.method == 'POST':
-        return create_edit_post(request, post)
-
     if post.author != request.user:
         return redirect('posts:post_detail', post_id=post.id)
 
+    form = PostForm(
+        request.POST or None,
+        files=request.FILES or None,
+        instance=post
+    )
     context = {
-        'form': PostForm(instance=post),
+        'form': form,
         'post': post,
         'is_edit': True
     }
+
+    if request.method != 'POST':
+        return render(request, template_create_edit_post, context)
+
+    if form.is_valid():
+        form.save()
+        return redirect('posts:post_detail', post_id=post.id)
+
     return render(request, template_create_edit_post, context)
 
 

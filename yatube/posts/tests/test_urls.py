@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase, Client
+from django.core.cache import cache
 from http import HTTPStatus
 from ..models import Post, Group
 
@@ -43,6 +44,7 @@ class PostsURLTests(TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        User.objects.create_user(username='author')
         cls.auth = User.objects.create_user(username='auth')
         cls.smb_user = User.objects.create_user(username='smb_user')
         cls.group = Group.objects.create(
@@ -57,6 +59,7 @@ class PostsURLTests(TestCase):
         )
 
     def setUp(self):
+        cache.clear()
         self.guest_client = Client()
         self.smb_user_client = Client()
         self.smb_user_client.force_login(PostsURLTests.smb_user)
@@ -77,6 +80,18 @@ class PostsURLTests(TestCase):
                                               HTTPStatus.FOUND,
                                               HTTPStatus.OK),
             '/unknown_page/': get_status_user(HTTPStatus.NOT_FOUND),
+            '/posts/1/comment/': get_status_user(HTTPStatus.FOUND,
+                                                 HTTPStatus.FOUND,
+                                                 HTTPStatus.FOUND),
+            '/follow/': get_status_user(HTTPStatus.FOUND,
+                                        HTTPStatus.OK,
+                                        HTTPStatus.OK),
+            '/profile/author/follow/': get_status_user(HTTPStatus.FOUND,
+                                                       HTTPStatus.FOUND,
+                                                       HTTPStatus.FOUND),
+            '/profile/author/unfollow/': get_status_user(HTTPStatus.FOUND,
+                                                         HTTPStatus.FOUND,
+                                                         HTTPStatus.FOUND),
         }
         for url, dict_status in urls_name_status.items():
             with self.subTest(url=url):
@@ -100,18 +115,21 @@ class PostsURLTests(TestCase):
                 response = self.guest_client.get(url)
                 self.assertTemplateUsed(response, template)
 
+        cache.clear()
         urls_templates_name_for_user = {
             '/': 'posts/index.html',
             '/group/group-slug/': 'posts/group_list.html',
             '/profile/auth/': 'posts/profile.html',
             '/posts/1/': 'posts/post_detail.html',
             '/create/': 'posts/create_edit_post.html',
+            '/follow/': 'posts/follow.html',
         }
         for url, template in urls_templates_name_for_user.items():
             with self.subTest(url=url):
                 response = self.smb_user_client.get(url)
                 self.assertTemplateUsed(response, template)
 
+        cache.clear()
         urls_templates_name_for_auth = {
             '/': 'posts/index.html',
             '/group/group-slug/': 'posts/group_list.html',
@@ -119,6 +137,7 @@ class PostsURLTests(TestCase):
             '/posts/1/': 'posts/post_detail.html',
             '/create/': 'posts/create_edit_post.html',
             '/posts/1/edit/': 'posts/create_edit_post.html',
+            '/follow/': 'posts/follow.html',
         }
         for url, template in urls_templates_name_for_auth.items():
             with self.subTest(url=url):
